@@ -3,14 +3,15 @@ import os
 import tarfile
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QPushButton, QFileDialog, QTreeWidget, 
-                            QTreeWidgetItem, QLabel, QMessageBox)
+                            QTreeWidgetItem, QLabel, QMessageBox, QLineEdit,
+                            QTextEdit, QSplitter)
 from PyQt6.QtCore import Qt
 
 class FileExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("File Explorer with Tar.gz Support")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 1000, 800)
         
         # Main widget and layout
         main_widget = QWidget()
@@ -27,11 +28,40 @@ class FileExplorer(QMainWindow):
         controls_layout.addWidget(self.status_label)
         layout.addLayout(controls_layout)
         
+        # Search controls
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Enter keyword to search (e.g., 'time')")
+        self.search_input.returnPressed.connect(self.search_contents)
+        search_layout.addWidget(self.search_input)
+        
+        self.search_button = QPushButton("Search")
+        self.search_button.clicked.connect(self.search_contents)
+        search_layout.addWidget(self.search_button)
+        layout.addLayout(search_layout)
+        
+        # Splitter for tree and content
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        
         # File tree
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["File Name", "Size", "Type"])
         self.tree.itemDoubleClicked.connect(self.handle_file_click)
-        layout.addWidget(self.tree)
+        splitter.addWidget(self.tree)
+        
+        # Content display
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        
+        self.content_label = QLabel("File Content")
+        content_layout.addWidget(self.content_label)
+        
+        self.content_display = QTextEdit()
+        self.content_display.setReadOnly(True)
+        content_layout.addWidget(self.content_display)
+        
+        splitter.addWidget(content_widget)
+        layout.addWidget(splitter)
         
         # Memory usage label
         self.memory_label = QLabel("Memory Usage: 0 MB")
@@ -41,6 +71,7 @@ class FileExplorer(QMainWindow):
         self.current_directory = ""
         self.file_contents = {}
         self.total_memory_usage = 0
+        self.current_search_results = []
 
     def select_directory(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Directory")
@@ -53,6 +84,8 @@ class FileExplorer(QMainWindow):
         self.tree.clear()
         self.file_contents.clear()
         self.total_memory_usage = 0
+        self.content_display.clear()
+        self.current_search_results = []
         
         root = QTreeWidgetItem(self.tree)
         root.setText(0, os.path.basename(directory))
@@ -97,8 +130,7 @@ class FileExplorer(QMainWindow):
                 self.file_contents[current_path] = content
                 self.total_memory_usage += len(content)
                 self.update_memory_label()
-                QMessageBox.information(self, "File Content", 
-                                      f"File content loaded into memory: {len(content)} bytes")
+                self.display_content(current_path, content)
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Error reading file: {str(e)}")
 
@@ -109,13 +141,58 @@ class FileExplorer(QMainWindow):
                 for member in tar.getmembers():
                     if member.isfile():
                         content = tar.extractfile(member).read()
-                        self.file_contents[f"{current_path}/{member.name}"] = content
+                        file_path = f"{current_path}/{member.name}"
+                        self.file_contents[file_path] = content
                         self.total_memory_usage += len(content)
                 self.update_memory_label()
-                QMessageBox.information(self, "Tar Content", 
-                                      "Tar.gz contents loaded into memory")
+                self.display_content(current_path, None, is_tar=True)
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Error reading tar file: {str(e)}")
+
+    def display_content(self, file_path, content=None, is_tar=False):
+        if is_tar:
+            self.content_label.setText(f"Tar.gz Archive: {os.path.basename(file_path)}")
+            self.content_display.clear()
+            for path, content in self.file_contents.items():
+                if path.startswith(file_path):
+                    self.content_display.append(f"\nFile: {os.path.basename(path)}")
+                    self.content_display.append("-" * 50)
+                    self.content_display.append(content.decode('utf-8', errors='ignore'))
+        else:
+            self.content_label.setText(f"File: {os.path.basename(file_path)}")
+            self.content_display.clear()
+            self.content_display.append(content.decode('utf-8', errors='ignore'))
+
+    def search_contents(self):
+        keyword = self.search_input.text().strip().lower()
+        if not keyword:
+            QMessageBox.warning(self, "Search", "Please enter a search keyword")
+            return
+
+        self.current_search_results = []
+        self.content_display.clear()
+        self.content_label.setText(f"Search Results for: '{keyword}'")
+        
+        for file_path, content in self.file_contents.items():
+            try:
+                text = content.decode('utf-8', errors='ignore')
+                if keyword in text.lower():
+                    self.current_search_results.append((file_path, text))
+                    self.content_display.append(f"\nFile: {os.path.basename(file_path)}")
+                    self.content_display.append("-" * 50)
+                    
+                    # Find and highlight all occurrences
+                    lines = text.split('\n')
+                    for i, line in enumerate(lines):
+                        if keyword in line.lower():
+                            self.content_display.append(f"Line {i+1}: {line}")
+                    
+                    self.content_display.append("\n")
+            except Exception as e:
+                continue
+
+        if not self.current_search_results:
+            self.content_display.append("No matches found.")
 
     def get_full_path(self, item):
         path_parts = []
